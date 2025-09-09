@@ -7,6 +7,6 @@ FROM docker.io/rclone/rclone:${RCLONE_VERSION} as rclone
 
 FROM scratch
 
-COPY --from=restic /usr/bin/restic /usr/bin/restic
-COPY --from=rclone /usr/local/bin/rclone /usr/bin/rclone
+COPY --from=restic /usr/bin/restic /restic
+COPY --from=rclone /usr/local/bin/rclone /rclone
 ENV PATH="/usr/bin"
