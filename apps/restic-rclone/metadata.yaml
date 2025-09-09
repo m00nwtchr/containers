@@ -1,0 +1,11 @@
+---
+app: restic-rclone
+base: false
+semantic_versioning: false
+channels:
+  - name: stable
+    platforms: ["linux/amd64"]
+    stable: true
+    tests:
+      enabled: true
+      type: cli
