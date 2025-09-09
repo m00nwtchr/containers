@@ -13,4 +13,4 @@ export BW_SESSION=$(bw login ${BW_USER} --passwordenv BW_PASSWORD --raw)
 bw unlock --check
 
 echo "Running 'bw server' on port ${BW_PORT}"
-bw serve --port ${BW_PORT} --hostname 0.0.0.0 #--disable-origin-protection
+bw serve --port ${BW_PORT} --hostname :: #--disable-origin-protection
