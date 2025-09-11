@@ -59,6 +59,16 @@ use_incluster_sa() {
   fi
 }
 
+wait_for_kanidm() {
+  local url="${KANIDM_INSTANCE}/status"
+  log "Waiting for Kanidm at $url"
+  # Try until it responds with HTTP 200
+  until curl -fsS "$url" >/dev/null 2>&1; do
+    sleep 2
+  done
+  log "Kanidm is up"
+}
+
 get_basic_secret() {
   local rs
   rs="$1"
@@ -153,6 +163,8 @@ reconcile() {
 }
 
 use_incluster_sa
+
+wait_for_kanidm
 
 # Initial reconcile (non-fatal)
 reconcile || log "non-fatal: initial reconcile failed"
