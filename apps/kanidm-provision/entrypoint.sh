@@ -150,11 +150,26 @@ reconcile() {
           continue
         }
 
-        kubectl create secret generic -n "$ns" "kanidm-${client}-oidc" \
-          --from-literal=client-secret="$secret" \
-          --save-config \
-          --dry-run=client -o yaml |
-          kubectl apply -f - || log "warn: apply failed for ${ns}/${client}-oidc"
+          secret_name="kanidm-${client}-oidc"
+
+          # Try patching the secret first
+          if ! kubectl patch secret -n "$ns" "$secret_name" \
+              --type merge \
+              -p "{\"stringData\": {\"client-secret\": \"${secret}\"}}" \
+              >/dev/null 2>&1; then
+            # If patch failed (likely not found), create the secret
+            if ! kubectl create secret generic -n "$ns" "$secret_name" \
+                  --from-literal=client-secret="$secret" \
+                  >/dev/null 2>&1; then
+              log "warn: failed to create or patch secret $ns/$secret_name"
+              continue
+            else
+              log "created secret $ns/$secret_name"
+            fi
+          else
+            log "patched secret $ns/$secret_name"
+          fi
+        done
       done
   ) || {
     log "non-fatal: reconcile failed (will continue loop)"
