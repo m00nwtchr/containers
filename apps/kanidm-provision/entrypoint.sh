@@ -169,7 +169,6 @@ reconcile() {
           else
             log "patched secret $ns/$secret_name"
           fi
-        done
       done
   ) || {
     log "non-fatal: reconcile failed (will continue loop)"
