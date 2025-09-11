@@ -19,12 +19,12 @@ use_incluster_sa() {
     export KUBECONFIG="$tmp_config"
 
     # ensure cleanup on exit
-    trap 'rm -f "$tmp_config"' EXIT
+    trap "rm -f \"${tmp_config}\"" EXIT
 
     local token ns cluster
     token="$(cat "$SA_DIR/token")"
     ns="$(cat "$SA_DIR/namespace")"
-    cluster="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+    cluster="https://[${KUBERNETES_SERVICE_HOST}]:${KUBERNETES_SERVICE_PORT}"
 
     kubectl config set-cluster in-cluster \
       --server="$cluster" \
