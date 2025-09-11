@@ -94,7 +94,7 @@ reconcile() {
           elif ($a|type)=="array"  and ($b|type)=="array"  then
             ($a + $b | unique)
           else
-            $b // $a                       # prefer right side, fall back to left if null
+            $b // $a // false                       # prefer right side, fall back to left if null
           end;
 
 				.items
