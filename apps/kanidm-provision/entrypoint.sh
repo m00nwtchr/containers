@@ -6,6 +6,8 @@ LABEL_SELECTOR="kanidm_config=1"
 NAMESPACE="kanidm"
 BASE='{"groups": {}, "persons": {}, "systems": {"oauth2": {}}}'
 
+DEBOUNCE_SECONDS="2"
+
 KANIDM_TOKEN_FILE="${KANIDM_TOKEN_FILE:="$PWD/token"}"
 KANIDM_TOKEN="${KANIDM_TOKEN:="$(cat "$KANIDM_TOKEN_FILE")"}"
 
@@ -206,8 +208,8 @@ reconcile || log "non-fatal: initial reconcile failed"
 while true; do
   kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" --watch-only -o name |
     while read -r _; do
+      while read -r -t "$DEBOUNCE_SECONDS" _; do :; done
       reconcile || log "non-fatal: reconcile failed during watch event"
-      sleep 1
     done
   log "watch stream ended or failed; restarting in 5s"
   sleep 5
