@@ -16,7 +16,7 @@ RUN cargo build --locked --release \
 
 FROM mirror.gcr.io/alpine:3.20
 
-RUN apk add --no-cache bash kubectl
+RUN apk add --no-cache bash jq curl kubectl
 COPY --from=build /src/target/release/kanidm-provision /usr/local/bin/kanidm-provision
 
 COPY ./apps/kanidm-provision/entrypoint.sh /entrypoint.sh
