@@ -88,6 +88,15 @@ reconcile() {
     all="$(
       kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json |
         jq -c --arg ns "$NAMESPACE" '
+        def dmerge($a; $b):
+          if   ($a|type)=="object" and ($b|type)=="object" then
+            reduce ($a + $b | keys_unsorted[]) as $k ({}; .[$k] = dmerge($a[$k]; $b[$k]))
+          elif ($a|type)=="array"  and ($b|type)=="array"  then
+            ($a + $b | unique)
+          else
+            $b // $a                       # prefer right side, fall back to left if null
+          end;
+
 				.items
 				| map({
 					name: .metadata.name,
@@ -97,11 +106,12 @@ reconcile() {
 						| to_entries
 						| map(select(.key | endswith(".json")))
 						| map(.value | fromjson)
-						| reduce .[] as $item ({}; . * $item) # deep-merge within a single CM
+						| reduce .[] as $x ({}; dmerge(.; $x))
 					)
 				})
 			'
     )"
+    log "$all"
 
     ns_clients="$(
       printf '%s\n' "$all" |
@@ -122,13 +132,22 @@ reconcile() {
 				$base * (map(.data) | reduce .[] as $item ({}; . * $item))
 			' >"$state"
 
-      log "Provisioning with merged state (bytes: $(wc -c <"$state" | tr -d ' '))"
-
-      if ! KANIDM_TOKEN="$KANIDM_TOKEN" \
-        kanidm-provision --no-auto-remove --url "$KANIDM_INSTANCE" --state "$state"; then
-        log "warn: kanidm-provision failed (state file: $state)"
-      else
+      if ! printf '%s\n' "$all" |
+        jq -e -c --argjson base "$BASE" '
+  				$base * (map(.data) | reduce .[] as $item ({}; . * $item))
+  			' >"$state"; then
+        log "warn: failed to generate provision state; skipping kanidm-provision"
         rm -f "$state"
+        echo "$all">/tmp/all.json
+      else
+        log "Provisioning with merged state (bytes: $(wc -c <"$state" | tr -d ' '))"
+        if ! KANIDM_TOKEN="$KANIDM_TOKEN" \
+          kanidm-provision --no-auto-remove --url "$KANIDM_INSTANCE" --state "$state"; then
+          log "warn: kanidm-provision failed (state file: $state)"
+          mv "$state" /tmp/state.json
+        else
+          rm -f "$state"
+        fi
       fi
     fi
 
@@ -150,25 +169,25 @@ reconcile() {
           continue
         }
 
-          secret_name="kanidm-${client}-oidc"
+        secret_name="kanidm-${client}-oidc"
 
-          # Try patching the secret first
-          if ! kubectl patch secret -n "$ns" "$secret_name" \
-              --type merge \
-              -p "{\"stringData\": {\"client-secret\": \"${secret}\"}}" \
-              >/dev/null 2>&1; then
-            # If patch failed (likely not found), create the secret
-            if ! kubectl create secret generic -n "$ns" "$secret_name" \
-                  --from-literal=client-secret="$secret" \
-                  >/dev/null 2>&1; then
-              log "warn: failed to create or patch secret $ns/$secret_name"
-              continue
-            else
-              log "created secret $ns/$secret_name"
-            fi
+        # Try patching the secret first
+        if ! kubectl patch secret -n "$ns" "$secret_name" \
+          --type merge \
+          -p "{\"stringData\": {\"client-secret\": \"${secret}\"}}" \
+          >/dev/null 2>&1; then
+          # If patch failed (likely not found), create the secret
+          if ! kubectl create secret generic -n "$ns" "$secret_name" \
+            --from-literal=client-secret="$secret" \
+            >/dev/null 2>&1; then
+            log "warn: failed to create or patch secret $ns/$secret_name"
+            continue
           else
-            log "patched secret $ns/$secret_name"
+            log "created secret $ns/$secret_name"
           fi
+        else
+          log "patched secret $ns/$secret_name"
+        fi
       done
   ) || {
     log "non-fatal: reconcile failed (will continue loop)"
