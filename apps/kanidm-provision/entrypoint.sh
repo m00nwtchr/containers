@@ -11,20 +11,33 @@ KANIDM_TOKEN="${KANIDM_TOKEN:="$(cat "$KANIDM_TOKEN_FILE")"}"
 
 KANIDM_INSTANCE="${KANIDM_INSTANCE:="https://idm.m00nlit.dev"}"
 
+log() {
+  printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
+}
+
 use_incluster_sa() {
   SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
   if [ -f "$SA_DIR/token" ] && [ -f "$SA_DIR/ca.crt" ]; then
     local tmp_config
     tmp_config="$(mktemp)"
     export KUBECONFIG="$tmp_config"
-
-    # ensure cleanup on exit
-    trap "rm -f \"${tmp_config}\"" EXIT
+    trap 'rm -f "$KUBECONFIG"' EXIT
 
     local token ns cluster
     token="$(cat "$SA_DIR/token")"
     ns="$(cat "$SA_DIR/namespace")"
-    cluster="https://[${KUBERNETES_SERVICE_HOST}]:${KUBERNETES_SERVICE_PORT}"
+
+    host="${KUBERNETES_SERVICE_HOST:?KUBERNETES_SERVICE_HOST not set}"
+    port="${KUBERNETES_SERVICE_PORT:-443}"
+
+    # If it's an IPv6 literal (contains ':'), wrap in [ ]; if already bracketed, leave it.
+    if [[ "$host" == *:* ]]; then
+      if [[ "$host" != \[*\] ]]; then
+        host="[$host]"
+      fi
+    fi
+
+    cluster="https://${host}:${port}"
 
     kubectl config set-cluster in-cluster \
       --server="$cluster" \
@@ -40,10 +53,9 @@ use_incluster_sa() {
       --namespace="$ns" >/dev/null
 
     kubectl config use-context in-cluster >/dev/null
-
-    echo "Using in-cluster serviceaccount (namespace: $ns)"
+    log "Using in-cluster serviceaccount (namespace: $ns)"
   else
-    echo "No in-cluster serviceaccount found, using default kubeconfig"
+    log "No in-cluster serviceaccount found, using default kubeconfig"
   fi
 }
 
@@ -53,90 +65,105 @@ get_basic_secret() {
   curl -fsS \
     -H 'accept: application/json' \
     -H "Authorization: Bearer ${KANIDM_TOKEN}" \
-    "${KANIDM_INSTANCE}/v1/oauth2/${rs}/_basic_secret" | jq -er
+    "${KANIDM_INSTANCE}/v1/oauth2/${rs}/_basic_secret" |
+    jq -er '.'
 }
 
 reconcile() {
-  local all ns_clients
-  # Snapshot all matching ConfigMaps (within $NAMESPACE) and pre-merge each CM's *.json into .data
-  all="$(
-    kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json |
-      jq -c --arg ns "$NAMESPACE" '
-			.items
-			| map({
-				name: .metadata.name,
-				namespace: (.data.targetNamespace // $ns),
-				data: (
-					.data
-					| to_entries
-					| map(select(.key | endswith(".json")))
-					| map(.value | fromjson)
-					| reduce .[] as $item ({}; . * $item) # deep-merge within a single CM
-				)
-			})
-		'
-  )"
+  # Run reconcile in a subshell; on any error, log and return success (non-fatal)
+  (
+    # everything inside still benefits from -euo pipefail
+    local all ns_clients
 
-  # Build: { "<ns>": ["clientA","clientB", ...], ... }
-  ns_clients="$(
-    printf '%s\n' "$all" |
-      jq -c '
-			sort_by(.namespace)
-			| group_by(.namespace)
-			| map({ (.[0].namespace): (map(.data.systems?.oauth2? // {} | keys) | add) })
-			| add // {}
-		'
-  )"
+    all="$(
+      kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json |
+        jq -c --arg ns "$NAMESPACE" '
+				.items
+				| map({
+					name: .metadata.name,
+					namespace: (.data.targetNamespace // $ns),
+					data: (
+						.data
+						| to_entries
+						| map(select(.key | endswith(".json")))
+						| map(.value | fromjson)
+						| reduce .[] as $item ({}; . * $item) # deep-merge within a single CM
+					)
+				})
+			'
+    )"
 
-  if [[ -e "/usr/local/bin/kanidm-provision" ]]; then
-    local temp
-    temp=$(mktemp)
-    printf '%s\n' "$all" |
-      jq -c --argjson base "$BASE" '
-        $base * (map(.data) | reduce .[] as $item ({}; . * $item))
-    ' >"$temp"
-    cat "$temp" >&2
+    ns_clients="$(
+      printf '%s\n' "$all" |
+        jq -c '
+				sort_by(.namespace)
+				| group_by(.namespace)
+				| map({ (.[0].namespace): (map(.data.systems?.oauth2? // {} | keys) | add) })
+				| add // {}
+			'
+    )"
 
-    KANIDM_TOKEN="$KANIDM_TOKEN" \
-      kanidm-provision --no-auto-remove --url "$KANIDM_INSTANCE" --state "$temp"
-    rm "$temp"
-  fi
+    # Optional: provision from merged config over the base skeleton
+    if [[ -x "/usr/local/bin/kanidm-provision" ]]; then
+      local state
+      state="$(mktemp)"
+      printf '%s\n' "$all" |
+        jq -c --argjson base "$BASE" '
+				$base * (map(.data) | reduce .[] as $item ({}; . * $item))
+			' >"$state"
 
-  # Iterate namespace/client pairs
-  printf '%s\n' "$ns_clients" |
-    jq -r '
-		to_entries[]?
-		| .key as $ns
-		| (.value // [])[]
-		| [$ns, .] | @tsv
-	' |
-    while IFS="$(printf '\t')" read -r ns client; do
-      # Fetch secret string from Kanidm
-      if ! secret="$(get_basic_secret "$client")"; then
-        echo "warn: failed to fetch secret for client=$client (ns=$ns)" >&2
-        continue
+      log "Provisioning with merged state (bytes: $(wc -c <"$state" | tr -d ' '))"
+
+      if ! KANIDM_TOKEN="$KANIDM_TOKEN" \
+        kanidm-provision --no-auto-remove --url "$KANIDM_INSTANCE" --state "$state"; then
+        log "warn: kanidm-provision failed (state file: $state)"
+      else
+        rm -f "$state"
       fi
-      [ -n "$secret" ] || {
-        echo "warn: empty secret for client=$client (ns=$ns)" >&2
-        continue
-      }
+    fi
 
-      # Idempotent create/update via apply
-      kubectl create secret generic -n "$ns" "${client}-oidc" \
-        --from-literal=client-secret="$secret" \
-        --dry-run=client -o yaml |
-        kubectl apply -f -
-    done
+    # Iterate namespace/client pairs; create/update secrets idempotently
+    printf '%s\n' "$ns_clients" |
+      jq -r '
+			to_entries[]?
+			| .key as $ns
+			| (.value // [])[]
+			| [$ns, .] | @tsv
+		' |
+      while IFS="$(printf '\t')" read -r ns client; do
+        if ! secret="$(get_basic_secret "$client")"; then
+          log "warn: failed to fetch secret for client=$client (ns=$ns)"
+          continue
+        fi
+        [ -n "$secret" ] || {
+          log "warn: empty secret for client=$client (ns=$ns)"
+          continue
+        }
+
+        kubectl create secret generic -n "$ns" "kanidm-${client}-oidc" \
+          --from-literal=client-secret="$secret" \
+          --save-config \
+          --dry-run=client -o yaml |
+          kubectl apply -f - || log "warn: apply failed for ${ns}/${client}-oidc"
+      done
+  ) || {
+    log "non-fatal: reconcile failed (will continue loop)"
+    return 0
+  }
 }
 
 use_incluster_sa
 
-# Initial reconcile at startup
-reconcile
+# Initial reconcile (non-fatal)
+reconcile || log "non-fatal: initial reconcile failed"
 
-# Watch for changes and reconcile again
-kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" --watch-only -o name |
-  while read -r _; do
-    reconcile
-    sleep 1
-  done
+# Watch loop: never exit the container on errors; restart the watch if it breaks
+while true; do
+  kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" --watch-only -o name |
+    while read -r _; do
+      reconcile || log "non-fatal: reconcile failed during watch event"
+      sleep 1
+    done
+  log "watch stream ended or failed; restarting in 5s"
+  sleep 5
+done
