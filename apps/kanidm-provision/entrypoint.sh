@@ -148,7 +148,6 @@ reconcile() {
 				})
 			'
     )"
-    log "$all"
 
     ns_clients="$(
       printf '%s\n' "$all" |
