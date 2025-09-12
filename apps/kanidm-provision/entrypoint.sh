@@ -69,10 +69,7 @@ use_incluster_sa() {
 k8s_patch_secret() {
   ns="$1"
   name="$2"
-  value="$3"
-
-  # Build safe JSON (handles quotes/newlines in the secret)
-  patch_payload="$(jq -nc --arg s "$value" '{stringData: {"client-secret": $s}}')"
+  payload="$3"
 
   if ((isSA == 0)); then
     ca="$SA_DIR/ca.crt"
@@ -82,7 +79,7 @@ k8s_patch_secret() {
       -H "Authorization: Bearer $token" \
       -H 'Content-Type: application/merge-patch+json' \
       -X PATCH "${cluster}/api/v1/namespaces/${ns}/secrets/${name}" \
-      --data-binary "$patch_payload")" || return 1
+      --data-binary "$payload")" || return 1
 
     case "$http_code" in
     200 | 201) return 0 ;; # success
@@ -91,8 +88,37 @@ k8s_patch_secret() {
   else
     kubectl patch secret -n "$ns" "$name" \
       --type merge \
-      -p "$patch_payload" \
+      -p "$payload" \
       >/dev/null 2>&1
+  fi
+}
+
+reconcile_secret() {
+  ns="$1"
+  client="$2"
+  secret="$3"
+  clientIdKey="$4"
+  clientSecretKey="$5"
+
+  secret_name="kanidm-${client}-oidc"
+  payload="$(jq -nc --arg id "$client" --arg s "$secret" --arg ik "$clientIdKey" --arg sk "$clientSecretKey" \
+    '{stringData: {$sk: $s, $ik: $id}}'
+  )"
+  
+  # Try patching the secret first
+  if ! k8s_patch_secret "$ns" "$secret_name" "$payload"; then
+    # If patch failed (likely not found), create the secret
+    if ! kubectl create secret generic -n "$ns" "$secret_name" \
+      --from-literal="$clientIdKey=$client" \
+      --from-literal="$clientSecretKey=$secret" \
+      >/dev/null 2>&1; then
+      log "warn: failed to create or patch secret $ns/$secret_name"
+      # continue
+    else
+      log "created secret $ns/$secret_name"
+    fi
+  else
+    log "patched secret $ns/$secret_name"
   fi
 }
 
@@ -154,7 +180,7 @@ reconcile() {
         jq -c '
 				sort_by(.namespace)
 				| group_by(.namespace)
-				| map({ (.[0].namespace): (map(.data.systems?.oauth2? // {} | keys) | add) })
+				| map({ (.[0].namespace): (map(.data.systems?.oauth2? // {} | to_entries | map({ name: .key, config: .value.k8s? })) | add) })
 				| add // {}
 			'
     )"
@@ -166,7 +192,7 @@ reconcile() {
       if ! printf '%s\n' "$all" |
         jq -e -c --argjson base "$BASE" '
     			$base * (
-    				map(.data) | reduce .[] as $item ({}; . * $item)
+    				map(.data) | reduce .[] as $item ({}; . * $item) | del(.systems.oauth2[]?.k8s)
     			)
     		' |
         KANIDM_TOKEN="$KANIDM_TOKEN" \
@@ -184,9 +210,9 @@ reconcile() {
 			to_entries[]?
 			| .key as $ns
 			| (.value // [])[]
-			| [$ns, .] | @tsv
+			| [$ns, .name, .config?.clientIdKey // "client-id", .config?.clientSecretKey // "client-secret"] | @tsv
 		' |
-      while IFS="$(printf '\t')" read -r ns client; do
+      while IFS="$(printf '\t')" read -r ns client clientIdKey clientSecretKey; do
         if ! secret="$(get_basic_secret "$client")"; then
           log "warn: failed to fetch secret for client=$client (ns=$ns)"
           continue
@@ -196,22 +222,7 @@ reconcile() {
           continue
         }
 
-        secret_name="kanidm-${client}-oidc"
-
-        # Try patching the secret first
-        if ! k8s_patch_secret "$ns" "$secret_name" "$secret"; then
-          # If patch failed (likely not found), create the secret
-          if ! kubectl create secret generic -n "$ns" "$secret_name" \
-            --from-literal=client-secret="$secret" \
-            >/dev/null 2>&1; then
-            log "warn: failed to create or patch secret $ns/$secret_name"
-            continue
-          else
-            log "created secret $ns/$secret_name"
-          fi
-        else
-          log "patched secret $ns/$secret_name"
-        fi
+        reconcile_secret "$ns" "$client" "$secret" "$clientIdKey" "$clientSecretKey"
       done
   ) || {
     log "non-fatal: reconcile failed (will continue loop)"
