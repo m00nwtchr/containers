@@ -6,6 +6,8 @@ LABEL_SELECTOR="kanidm_config=1"
 NAMESPACE="kanidm"
 BASE='{"groups": {}, "persons": {}, "systems": {"oauth2": {}}}'
 
+SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
+
 DEBOUNCE_SECONDS="2"
 
 KANIDM_TOKEN_FILE="${KANIDM_TOKEN_FILE:="$PWD/token"}"
@@ -13,33 +15,36 @@ KANIDM_TOKEN="${KANIDM_TOKEN:="$(cat "$KANIDM_TOKEN_FILE")"}"
 
 KANIDM_INSTANCE="${KANIDM_INSTANCE:="https://idm.m00nlit.dev"}"
 
+[ -f "$SA_DIR/token" ] && [ -f "$SA_DIR/ca.crt" ]
+isSA=$?
+
+if ((isSA == 0)); then
+  host="${KUBERNETES_SERVICE_HOST:?KUBERNETES_SERVICE_HOST not set}"
+  port="${KUBERNETES_SERVICE_PORT:-443}"
+
+  # If it's an IPv6 literal (contains ':'), wrap in [ ]; if already bracketed, leave it.
+  if [[ "$host" == *:* ]]; then
+    if [[ "$host" != \[*\] ]]; then
+      host="[$host]"
+    fi
+  fi
+
+  cluster="https://${host}:${port}"
+
+  token="$(cat "$SA_DIR/token")"
+  serviceNS="$(cat "$SA_DIR/namespace")"
+fi
+
 log() {
   printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
 }
 
 use_incluster_sa() {
-  SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
-  if [ -f "$SA_DIR/token" ] && [ -f "$SA_DIR/ca.crt" ]; then
+  if ((isSA == 0)); then
     local tmp_config
     tmp_config="$(mktemp)"
     export KUBECONFIG="$tmp_config"
     trap 'rm -f "$KUBECONFIG"' EXIT
-
-    local token ns cluster
-    token="$(cat "$SA_DIR/token")"
-    ns="$(cat "$SA_DIR/namespace")"
-
-    host="${KUBERNETES_SERVICE_HOST:?KUBERNETES_SERVICE_HOST not set}"
-    port="${KUBERNETES_SERVICE_PORT:-443}"
-
-    # If it's an IPv6 literal (contains ':'), wrap in [ ]; if already bracketed, leave it.
-    if [[ "$host" == *:* ]]; then
-      if [[ "$host" != \[*\] ]]; then
-        host="[$host]"
-      fi
-    fi
-
-    cluster="https://${host}:${port}"
 
     kubectl config set-cluster in-cluster \
       --server="$cluster" \
@@ -52,12 +57,42 @@ use_incluster_sa() {
     kubectl config set-context in-cluster \
       --cluster=in-cluster \
       --user=in-cluster-user \
-      --namespace="$ns" >/dev/null
+      --namespace="$serviceNS" >/dev/null
 
     kubectl config use-context in-cluster >/dev/null
-    log "Using in-cluster serviceaccount (namespace: $ns)"
+    log "Using in-cluster serviceaccount (namespace: $serviceNS)"
   else
     log "No in-cluster serviceaccount found, using default kubeconfig"
+  fi
+}
+
+k8s_patch_secret() {
+  ns="$1"
+  name="$2"
+  value="$3"
+
+  # Build safe JSON (handles quotes/newlines in the secret)
+  patch_payload="$(jq -nc --arg s "$value" '{stringData: {"client-secret": $s}}')"
+
+  if ((isSA == 0)); then
+    ca="$SA_DIR/ca.crt"
+
+    http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+      --cacert "$ca" \
+      -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/merge-patch+json' \
+      -X PATCH "${cluster}/api/v1/namespaces/${ns}/secrets/${name}" \
+      --data-binary "$patch_payload")" || return 1
+
+    case "$http_code" in
+    200 | 201) return 0 ;; # success
+    *) return 1 ;;         # treat anything else as failure
+    esac
+  else
+    kubectl patch secret -n "$ns" "$name" \
+      --type merge \
+      -p "$patch_payload" \
+      >/dev/null 2>&1
   fi
 }
 
@@ -140,7 +175,7 @@ reconcile() {
   			' >"$state"; then
         log "warn: failed to generate provision state; skipping kanidm-provision"
         rm -f "$state"
-        echo "$all">/tmp/all.json
+        echo "$all" >/tmp/all.json
       else
         log "Provisioning with merged state (bytes: $(wc -c <"$state" | tr -d ' '))"
         if ! KANIDM_TOKEN="$KANIDM_TOKEN" \
@@ -174,10 +209,7 @@ reconcile() {
         secret_name="kanidm-${client}-oidc"
 
         # Try patching the secret first
-        if ! kubectl patch secret -n "$ns" "$secret_name" \
-          --type merge \
-          -p "{\"stringData\": {\"client-secret\": \"${secret}\"}}" \
-          >/dev/null 2>&1; then
+        if ! k8s_patch_secret "$ns" "$secret_name" "$secret"; then
           # If patch failed (likely not found), create the secret
           if ! kubectl create secret generic -n "$ns" "$secret_name" \
             --from-literal=client-secret="$secret" \
