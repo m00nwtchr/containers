@@ -161,29 +161,20 @@ reconcile() {
 
     # Optional: provision from merged config over the base skeleton
     if [[ -x "/usr/local/bin/kanidm-provision" ]]; then
-      local state
-      state="$(mktemp)"
-      printf '%s\n' "$all" |
-        jq -c --argjson base "$BASE" '
-				$base * (map(.data) | reduce .[] as $item ({}; . * $item))
-			' >"$state"
+      log "Provisioning with merged state"
 
       if ! printf '%s\n' "$all" |
         jq -e -c --argjson base "$BASE" '
-  				$base * (map(.data) | reduce .[] as $item ({}; . * $item))
-  			' >"$state"; then
-        log "warn: failed to generate provision state; skipping kanidm-provision"
-        rm -f "$state"
-        echo "$all" >/tmp/all.json
-      else
-        log "Provisioning with merged state (bytes: $(wc -c <"$state" | tr -d ' '))"
-        if ! KANIDM_TOKEN="$KANIDM_TOKEN" \
-          kanidm-provision --no-auto-remove --url "$KANIDM_INSTANCE" --state "$state"; then
-          log "warn: kanidm-provision failed (state file: $state)"
-          mv "$state" /tmp/state.json
-        else
-          rm -f "$state"
-        fi
+    			$base * (
+    				map(.data) | reduce .[] as $item ({}; . * $item)
+    			)
+    		' |
+        KANIDM_TOKEN="$KANIDM_TOKEN" \
+          kanidm-provision \
+          --no-auto-remove \
+          --url "$KANIDM_INSTANCE" \
+          --state /dev/stdin; then
+        log "warn: kanidm-provision failed"
       fi
     fi
 
