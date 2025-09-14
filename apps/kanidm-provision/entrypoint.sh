@@ -203,7 +203,6 @@ reconcile() {
       fi
     done
 
-    echo "${images[@]}"
     images_json="$(printf '%s\n' "${images[@]}" |
       jq -Rn '
         import "lib" as l;
@@ -212,7 +211,6 @@ reconcile() {
         else map({ systems:{oauth2:{(.[0]): {imageFile:.[1]}}} }) | reduce .[] as $x ({}; l::dmerge(.; $x))
         end
       ')"
-    echo "$images_json"
 
     # Optional: provision from merged config over the base skeleton
     if [[ -x "/usr/local/bin/kanidm-provision" ]]; then
