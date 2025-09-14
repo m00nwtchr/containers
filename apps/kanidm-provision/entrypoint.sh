@@ -193,13 +193,20 @@ reconcile() {
         continue
       fi
 
-      if ! curl -fL --retry 3 --retry-delay 5 -o "$icon" "$imageUrl" &>/dev/null; then
-        log "Error: Failed to download $imageUrl"
-        continue
-      fi
+      if [[ "$(curl -H "Authorization: Bearer ${KANIDM_TOKEN}" -s -o /dev/null -w "%{http_code}" "${KANIDM_INSTANCE}/ui/images/oauth2/${name}")" -eq 404 ]]; then
+        if [[ -f "$icon" ]]; then
+          images+=("${name}=${icon}")
+          continue
+        fi
 
-      if [[ -f "$icon" ]]; then
-        images+=("${name}=${icon}")
+        if ! curl -fL --retry 3 --retry-delay 5 -o "$icon" "$imageUrl" &>/dev/null; then
+          log "Error: Failed to download $imageUrl"
+          continue
+        fi
+
+        if [[ -f "$icon" ]]; then
+          images+=("${name}=${icon}")
+        fi
       fi
     done
 
