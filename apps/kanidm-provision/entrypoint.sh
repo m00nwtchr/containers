@@ -101,10 +101,11 @@ reconcile_secret() {
   clientSecretKey="$5"
 
   secret_name="kanidm-${client}-oidc"
-  payload="$(jq -nc --arg id "$client" --arg s "$secret" --arg ik "$clientIdKey" --arg sk "$clientSecretKey" \
-    '{stringData: {$sk: $s, $ik: $id}}'
+  payload="$(
+    jq -nc --arg id "$client" --arg s "$secret" --arg ik "$clientIdKey" --arg sk "$clientSecretKey" \
+      '{stringData: {$sk: $s, $ik: $id}}'
   )"
-  
+
   # Try patching the secret first
   if ! k8s_patch_secret "$ns" "$secret_name" "$payload"; then
     # If patch failed (likely not found), create the secret
@@ -113,7 +114,6 @@ reconcile_secret() {
       --from-literal="$clientSecretKey=$secret" \
       >/dev/null 2>&1; then
       log "warn: failed to create or patch secret $ns/$secret_name"
-      # continue
     else
       log "created secret $ns/$secret_name"
     fi
@@ -151,25 +151,17 @@ reconcile() {
     all="$(
       kubectl get configmaps -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json |
         jq -c --arg ns "$NAMESPACE" '
-        def dmerge($a; $b):
-          if   ($a|type)=="object" and ($b|type)=="object" then
-            reduce ($a + $b | keys_unsorted[]) as $k ({}; .[$k] = dmerge($a[$k]; $b[$k]))
-          elif ($a|type)=="array"  and ($b|type)=="array"  then
-            ($a + $b | unique)
-          else
-            $b // $a // false                       # prefer right side, fall back to left if null
-          end;
-
+        import "lib" as l;
 				.items
 				| map({
-					name: .metadata.name,
+					#name: .metadata.name,
 					namespace: (.data.targetNamespace // $ns),
 					data: (
 						.data
 						| to_entries
 						| map(select(.key | endswith(".json")))
 						| map(.value | fromjson)
-						| reduce .[] as $x ({}; dmerge(.; $x))
+						| reduce .[] as $x ({}; l::dmerge(.; $x))
 					)
 				})
 			'
@@ -179,19 +171,56 @@ reconcile() {
       printf '%s\n' "$all" |
         jq -c '
 				sort_by(.namespace)
-				| group_by(.namespace)
-				| map({ (.[0].namespace): (map(.data.systems?.oauth2? // {} | to_entries | map({ name: .key, config: .value.k8s? })) | add) })
-				| add // {}
+				| map(
+				  .namespace as $ns
+				  | .data.systems?.oauth2 // {}
+				  | to_entries
+				  | map({ name: .key, namespace: $ns, config: (.value.k8s? // {}) })
+				) | add // []
 			'
     )"
+
+    mapfile -t lines < <(printf '%s\n' "$ns_clients" | jq -r '
+        .[]? | [.name, .config?.imageUrl // ""] | @tsv
+    ')
+
+    images=()
+    for line in "${lines[@]}"; do
+      IFS=$'\t' read -r name imageUrl <<<"$line"
+      icon="/data/icons/${name}.svg"
+
+      if [[ -z "$imageUrl" ]]; then
+        continue
+      fi
+
+      if ! curl -fL --retry 3 --retry-delay 5 -o "$icon" "$imageUrl" &>/dev/null; then
+        log "Error: Failed to download $imageUrl"
+        continue
+      fi
+
+      if [[ -f "$icon" ]]; then
+        images+=("${name}=${icon}")
+      fi
+    done
+
+    echo "${images[@]}"
+    images_json="$(printf '%s\n' "${images[@]}" |
+      jq -Rn '
+        import "lib" as l;
+        [inputs | split("=")] |
+        if (.[0] | length) == 0 then {} 
+        else map({ systems:{oauth2:{(.[0]): {imageFile:.[1]}}} }) | reduce .[] as $x ({}; l::dmerge(.; $x))
+        end
+      ')"
+    echo "$images_json"
 
     # Optional: provision from merged config over the base skeleton
     if [[ -x "/usr/local/bin/kanidm-provision" ]]; then
       log "Provisioning with merged state"
 
       if ! printf '%s\n' "$all" |
-        jq -e -c --argjson base "$BASE" '
-    			$base * (
+        jq -e -c --argjson base "$BASE" --argjson images "$images_json" '
+    			$base * $images * (
     				map(.data) | reduce .[] as $item ({}; . * $item) | del(.systems.oauth2[]?.k8s)
     			)
     		' |
@@ -207,10 +236,8 @@ reconcile() {
     # Iterate namespace/client pairs; create/update secrets idempotently
     printf '%s\n' "$ns_clients" |
       jq -r '
-			to_entries[]?
-			| .key as $ns
-			| (.value // [])[]
-			| [$ns, .name, .config?.clientIdKey // "client-id", .config?.clientSecretKey // "client-secret"] | @tsv
+			.[]?
+			| [.namespace, .name, .config?.clientIdKey // "client-id", .config?.clientSecretKey // "client-secret"] | @tsv
 		' |
       while IFS="$(printf '\t')" read -r ns client clientIdKey clientSecretKey; do
         if ! secret="$(get_basic_secret "$client")"; then
