@@ -1,5 +1,5 @@
 ---
 # https://github.com/aelsabbahy/goss/blob/master/docs/manual.md#file
 file:
-  /usr/local/bin/kanidm-provision:
+  /usr/local/bin/ssh-tpm-agent:
     exists: true
