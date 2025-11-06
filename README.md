@@ -8,6 +8,7 @@ Container | Channel | Image
 [debian](https://github.com/m00nwtchr/containers/pkgs/container/debian) | bookworm-slim | ghcr.io/m00nwtchr/debian
 [kanidm-provision](https://github.com/m00nwtchr/containers/pkgs/container/kanidm-provision) | stable | ghcr.io/m00nwtchr/kanidm-provision
 [restic-rclone](https://github.com/m00nwtchr/containers/pkgs/container/restic-rclone) | stable | ghcr.io/m00nwtchr/restic-rclone
+[ssh-tpm-agent](https://github.com/m00nwtchr/containers/pkgs/container/ssh-tpm-agent) | stable | ghcr.io/m00nwtchr/ssh-tpm-agent
 
 
 ## Credits
