@@ -9,5 +9,6 @@ FROM mirror.gcr.io/alpine:3.20
 
 COPY --from=build /usr/local/bin/ssh-tpm-agent /usr/local/bin/ssh-tpm-agent
 
+VOLUME [ "/.ssh" ]
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/ssh-tpm-agent", "-l", "/var/tmp/ssh-tpm-agent.sock"]
