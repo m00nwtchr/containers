@@ -5,6 +5,8 @@ ARG VERSION
 
 RUN apk add --no-cache \
   mesa-dri-gallium \
+  mesa-egl \
+  mesa-gles \
   kodi-wayland=${VERSION}
 
 RUN addgroup -S app && adduser -S -D -G app app
