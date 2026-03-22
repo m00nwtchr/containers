@@ -2,10 +2,12 @@
 
 set -eu
 
-XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime-dir-$(id -u)}"
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-mkdir -p "${XDG_RUNTIME_DIR}"
-chmod 700 "${XDG_RUNTIME_DIR}"
+if [ ! -d "${XDG_RUNTIME_DIR}" ] || [ ! -w "${XDG_RUNTIME_DIR}" ]; then
+  printf 'XDG_RUNTIME_DIR is not writable: %s\n' "${XDG_RUNTIME_DIR}" >&2
+  exit 1
+fi
 
 export XDG_RUNTIME_DIR
 

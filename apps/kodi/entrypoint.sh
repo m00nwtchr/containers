@@ -2,11 +2,18 @@
 
 set -eu
 
-XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime-dir-$(id -u)}"
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 HOME="${HOME:-/data}"
 
-mkdir -p "${XDG_RUNTIME_DIR}" "${HOME}"
-chmod 700 "${XDG_RUNTIME_DIR}"
+if [ ! -d "${XDG_RUNTIME_DIR}" ] || [ ! -w "${XDG_RUNTIME_DIR}" ]; then
+  printf 'XDG_RUNTIME_DIR is not writable: %s\n' "${XDG_RUNTIME_DIR}" >&2
+  exit 1
+fi
+
+if [ ! -d "${HOME}" ] || [ ! -w "${HOME}" ]; then
+  printf 'HOME is not writable: %s\n' "${HOME}" >&2
+  exit 1
+fi
 
 export HOME
 export XDG_RUNTIME_DIR

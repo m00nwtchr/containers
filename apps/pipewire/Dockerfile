@@ -11,6 +11,8 @@ RUN apk add --no-cache \
 
 RUN addgroup -S app && adduser -S -D -G app app
 
+RUN mkdir -p /run/user && chmod 1777 /run/user
+
 COPY ./apps/pipewire/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
