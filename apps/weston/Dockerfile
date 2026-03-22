@@ -5,6 +5,7 @@ ARG VERSION
 
 RUN apk add --no-cache \
   libseat \
+  mesa-dri-gallium \
   seatd-launch \
   weston=${VERSION} \
   weston-backend-drm=${VERSION} \
