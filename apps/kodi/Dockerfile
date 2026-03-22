@@ -4,6 +4,7 @@ FROM alpine:3.20
 ARG VERSION
 
 RUN apk add --no-cache \
+  mesa-dri-gallium \
   kodi-wayland=${VERSION}
 
 RUN addgroup -S app && adduser -S -D -G app app
