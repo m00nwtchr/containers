@@ -10,6 +10,7 @@ RUN apk add --no-cache \
   weston=${VERSION} \
   weston-backend-drm=${VERSION} \
   weston-backend-headless=${VERSION} \
+  weston-shell-desktop=${VERSION} \
   weston-clients=${VERSION}
 
 RUN addgroup -S app && adduser -S -D -G app app
