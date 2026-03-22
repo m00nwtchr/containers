@@ -14,7 +14,13 @@ RUN apk add --no-cache \
 
 RUN addgroup -S app && adduser -S -D -G app app
 
-RUN mkdir -p /run/user && chmod 1777 /run/user
+RUN mkdir -p /tmp/run /data /cache && chmod 1777 /tmp/run /data /cache
+
+ENV XDG_CONFIG_HOME=/etc \
+  XDG_DATA_HOME=/data \
+  XDG_STATE_HOME=/data \
+  XDG_CACHE_HOME=/cache \
+  XDG_RUNTIME_DIR=/tmp/run
 
 COPY ./apps/weston/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
