@@ -3,7 +3,7 @@
 set -euo pipefail
 
 LABEL_SELECTOR="kanidm_config=1"
-NAMESPACE="kanidm"
+NAMESPACE="${KANIDM_NAMESPACE:-kanidm}"
 BASE='{"groups": {}, "persons": {}, "systems": {"oauth2": {}}}'
 
 SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
@@ -214,7 +214,7 @@ reconcile() {
       jq -Rn '
         import "lib" as l;
         [inputs | split("=")] |
-        if (.[0] | length) == 0 then {} 
+        if (.[0] | length) == 0 then {}
         else map({ systems:{oauth2:{(.[0]): {imageFile:.[1]}}} }) | reduce .[] as $x ({}; l::dmerge(.; $x))
         end
       ')"
