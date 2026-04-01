@@ -4,6 +4,7 @@ Each Image will be built with a `rolling` tag, along with tags specific to it's 
 
 Container | Channel | Image
 --- | --- | ---
+[blocky](https://github.com/m00nwtchr/containers/pkgs/container/blocky) | stable | ghcr.io/m00nwtchr/blocky
 [bw](https://github.com/m00nwtchr/containers/pkgs/container/bw) | stable | ghcr.io/m00nwtchr/bw
 [debian](https://github.com/m00nwtchr/containers/pkgs/container/debian) | bookworm-slim | ghcr.io/m00nwtchr/debian
 [git](https://github.com/m00nwtchr/containers/pkgs/container/git) | stable | ghcr.io/m00nwtchr/git
