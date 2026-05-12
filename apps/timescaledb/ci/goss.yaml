@@ -1,0 +1,13 @@
+---
+package:
+  timescaledb:
+    installed: true
+    versions:
+      - exists: true
+        path: /usr/share/extension/timescaledb.control
+      - exists: true
+        path: /usr/lib/libtimescaledb.so
+  postgres-extensions:
+    installed: true
+    files:
+      - /usr/share/extension/timescaledb--*.sql
