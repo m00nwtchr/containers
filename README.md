@@ -12,6 +12,7 @@ Container | Channel | Image
 [pipewire](https://github.com/m00nwtchr/containers/pkgs/container/pipewire) | stable | ghcr.io/m00nwtchr/pipewire
 [restic-rclone](https://github.com/m00nwtchr/containers/pkgs/container/restic-rclone) | stable | ghcr.io/m00nwtchr/restic-rclone
 [ssh-tpm-agent](https://github.com/m00nwtchr/containers/pkgs/container/ssh-tpm-agent) | stable | ghcr.io/m00nwtchr/ssh-tpm-agent
+[timescaledb](https://github.com/m00nwtchr/containers/pkgs/container/timescaledb) | stable | ghcr.io/m00nwtchr/timescaledb
 [weston](https://github.com/m00nwtchr/containers/pkgs/container/weston) | stable | ghcr.io/m00nwtchr/weston
 
 
