@@ -1,15 +1,15 @@
-ARG VERSION
-
 FROM postgres:18-trixie AS build
+
+ARG VERSION
 
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y postgresql-server-dev-18 build-essential cmake curl && \
+    apt-get install -y postgresql-server-dev-18 build-essential cmake curl libicu-dev && \
     rm -rf /var/lib/apt/lists
 
 WORKDIR /tmp
 
-RUN curl -sL https://github.com/timescale/timescaledb/archive/refs/tags/${VERSION}.tar.gz | tar xz && \
+RUN curl -sLf https://github.com/timescale/timescaledb/archive/refs/tags/${VERSION}.tar.gz | tar xz && \
     ./timescaledb-*/bootstrap && \
     DESTDIR=../built make -C build install
 
