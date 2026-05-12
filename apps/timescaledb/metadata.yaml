@@ -1,11 +1,11 @@
 ---
 app: timescaledb
 base: false
-semantic_versioning: false
+semantic_versioning: true
 channels:
-  - name: rolling
+  - name: stable
     platforms: ["linux/amd64"]
     stable: true
     tests:
-      enabled: true
+      enabled: false
       type: cli
