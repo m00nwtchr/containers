@@ -113,6 +113,8 @@ The daemon (`gnupg-pkcs11-scd`) has hardcoded expectations:
 
 The entrypoint script:
 
+0. **Ensure runtime paths exist.** Run `mkdir -p` on `${SCD_HOMEDIR}` and `${SCD_SOCKET_DIR}` before any writes. The Dockerfile creates these paths at build time and chowns `/var/lib/gnupg-pkcs11-scd` to UID 1000, so this is normally a no-op. The defensive `mkdir -p` covers the case where the user mounts `SCD_HOMEDIR` or `SCD_SOCKET_DIR` to a path that does not yet exist (e.g. an emptyDir from a fresh k8s pod). If `mkdir` fails, exit 1 with a message that includes the path and the running UID.
+
 1. **Determine the provider list.**
    - If `PKCS11_PROVIDERS` is **set** (even to the empty string) → split on `,`, trim whitespace, drop empties. The empty-string case is treated as an explicit request for no providers and is rejected by step 2.
    - If `PKCS11_PROVIDERS` is **unset** → enumerate subdirectories of `${PKCS11_PROVIDER_DIR:-/providers}`. Each subdir's basename becomes a provider name. Subdirs whose `lib<name>*.so` glob finds zero matches are silently skipped (stray dirs).
@@ -423,6 +425,16 @@ A separate workflow (out of scope for these images) runs:
 4. Assert the daemon started and a socket exists at `/var/run/gnupg-pkcs11-scd/gnupg-pkcs11-scd.*/agent.S`.
 
 This validates the cross-image contract without requiring a live Infisical signer.
+
+### Recommended CI smoke (after this PR lands)
+
+A follow-up CI step (in `.github/workflows/build-images.yaml` or a new workflow) should:
+
+1. Build both images.
+2. Start the sidecar with a stub `.so` mounted at `/providers/stub/` (e.g. an empty file is fine for this check — the daemon's PKCS#11 load will fail, but `mkdtemp` runs first so the socket should still appear briefly before the daemon exits; alternatively use `softhsm2` from a Debian container as the stub provider).
+3. `docker exec` the sidecar and assert `${SCD_SOCKET_DIR}/gnupg-pkcs11-scd.*/agent.S` exists.
+
+This guards against upstream changes to the daemon's `mkdtemp` template (`SOCKET_DIR_TEMPLATE`) which would silently break the healthcheck and the cross-image contract.
 
 ## README update
 

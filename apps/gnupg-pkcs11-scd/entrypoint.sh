@@ -96,5 +96,8 @@ fi
 } > "$CONF"
 
 # --- Step 4: exec daemon ---
+# Do not `unset` provider-specific env vars here — INFISICAL_* and similar
+# variables must propagate to the dlopened PKCS#11 library. The library
+# reads them at load time via getenv(3).
 export GNUPG_PKCS11_SOCKETDIR="$SCD_SOCKET_DIR"
 exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
