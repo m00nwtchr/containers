@@ -95,6 +95,25 @@ fi
   printf '%s\n' "${lines[@]}"
 } > "$CONF"
 
+# --- Step 3.5: generate a minimal Infisical config file if absent ---
+# The upstream Infisical PKCS#11 library reads a JSON config file at the
+# path in $INFISICAL_CONFIG (default /etc/infisical/pkcs11.conf) and
+# always requires that file to exist, even if it contains only a default
+# log_level. Env vars like INFISICAL_SERVER_URL and the auth credentials
+# override values inside this file; the file itself just needs to be
+# valid JSON and readable. Create a dummy at the default path if the
+# user hasn't mounted one. Users who DO supply INFISICAL_* content via
+# config file should mount their own file at this path or set
+# INFISICAL_CONFIG to override.
+INFISICAL_CONFIG_PATH="${INFISICAL_CONFIG:-/etc/infisical/pkcs11.conf}"
+if [ ! -f "$INFISICAL_CONFIG_PATH" ]; then
+  mkdir -p "$(dirname "$INFISICAL_CONFIG_PATH")"
+  cat > "$INFISICAL_CONFIG_PATH" <<'JSON'
+{"log_level": "info"}
+JSON
+  chmod 600 "$INFISICAL_CONFIG_PATH"
+fi
+
 # --- Step 4: exec daemon ---
 # Do not `unset` provider-specific env vars here — INFISICAL_* and similar
 # variables must propagate to the dlopened PKCS#11 library. The library
