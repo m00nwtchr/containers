@@ -2,7 +2,7 @@
 file:
   /usr/bin/gnupg-pkcs11-scd:
     exists: true
-  /usr/local/bin/entrypoint.sh:
+  /entrypoint.sh:
     exists: true
     filetype: file
     filemode: 0755

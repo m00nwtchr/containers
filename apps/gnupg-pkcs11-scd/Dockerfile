@@ -8,7 +8,7 @@ RUN apt-get update \
       bash \
  && rm -rf /var/lib/apt/lists/*
 
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
 
 # Workaround for upstream Infisical .so: it declares NEEDED libc.so (no
 # version suffix). Debian only ships libc.so.6; the dynamic linker
@@ -26,6 +26,6 @@ VOLUME ["/var/run/gnupg-pkcs11-scd"]
 
 USER 1000:1000
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 
 HEALTHCHECK CMD sh -c 'for f in /var/run/gnupg-pkcs11-scd/gnupg-pkcs11-scd.*/agent.S; do [ -S "$f" ] && exit 0; done; exit 1'

@@ -1,0 +1,6 @@
+---
+file:
+  /usr/local/bin/scdaemon-shim:
+    exists: true
+    filetype: file
+    mode: "0755"

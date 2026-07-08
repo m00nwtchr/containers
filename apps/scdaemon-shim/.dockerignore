@@ -1,0 +1,25 @@
+# Build artifacts
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Docker / CI
+.dockerignore
+Dockerfile
+README.md
+LICENSE
+
+# Misc
+*.log
+*.tmp
+*.swp
+.DS_Store
