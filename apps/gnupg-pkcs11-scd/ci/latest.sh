@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-printf "%s" "0.11.0-1"
+printf "%s" "0.10.0-2+b1"
