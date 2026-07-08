@@ -99,5 +99,61 @@ fi
 # Do not `unset` provider-specific env vars here — INFISICAL_* and similar
 # variables must propagate to the dlopened PKCS#11 library. The library
 # reads them at load time via getenv(3).
+#
+# Run mode selection:
+#   - TTY attached (`[ -t 0 ]`): interactive shell → `--multi-server`,
+#     which speaks assuan on stdin/stdout.
+#   - No TTY (container PID 1): use `--daemon --no-detach` with a wrapper
+#     script that keeps PID 1 alive. `--daemon` mode forks; the parent
+#     prints SCDAEMON_INFO and exits. `--no-detach` skips setsid()/fd-close
+#     in the child. The fork's child (the actual daemon worker) continues
+#     running but is now orphaned from this script's PID. We parse
+#     SCDAEMON_INFO to capture the worker's PID, then wait on a sentinel
+#     process so PID 1 stays alive while forwarding SIGTERM/SIGINT to
+#     the worker. If the worker dies, we exit so the orchestrator
+#     restarts the container.
 export GNUPG_PKCS11_SOCKETDIR="$SCD_SOCKET_DIR"
-exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
+if [ -t 0 ]; then
+  exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
+fi
+
+# Container path: run daemon in background, parse SCDAEMON_INFO for the
+# worker PID, then keep PID 1 alive until the worker dies. The worker is
+# not a direct child of this shell (it was forked by the daemon parent
+# which then exits), so we poll with `kill -0` rather than `wait`.
+#
+# SCDAEMON_INFO format (per upstream scdaemon.c):
+#   SCDAEMON_INFO=<socket_path>:<pid>:<n>; export SCDAEMON_INFO
+# The trailing "n" is a protocol-version flag (always 1); we want <pid>.
+gnupg-pkcs11-scd --daemon --no-detach --homedir "$SCD_HOMEDIR" >/tmp/scd-info 2>&1 &
+WRAPPER_PID=$!
+# Wait for the wrapper (the daemon's parent) to fork and exit.
+wait "$WRAPPER_PID" || true
+SCDAEMON_INFO="$(cat /tmp/scd-info)"
+echo "$SCDAEMON_INFO"
+# Extract the PID: strip the prefix and suffix, then take the second
+# colon-separated field from the right (path:pid:n).
+INFO="${SCDAEMON_INFO#SCDAEMON_INFO=}"
+INFO="${INFO%; export SCDAEMON_INFO}"
+WORKER_PID="$(printf '%s' "$INFO" | awk -F: '{print $(NF-1)}')"
+if ! [[ "$WORKER_PID" =~ ^[0-9]+$ ]] || [ "$WORKER_PID" -le 1 ]; then
+  echo "Failed to extract worker PID from SCDAEMON_INFO: $SCDAEMON_INFO" >&2
+  exit 1
+fi
+rm -f /tmp/scd-info
+
+# Forward SIGTERM/SIGINT/SIGHUP to the worker so docker stop / pod
+# termination signals propagate.
+trap 'kill -TERM "$WORKER_PID" 2>/dev/null || true' TERM INT HUP
+
+# Poll the worker. We can't `wait` because the worker is not our direct
+# child (the daemon parent forked and exited). `kill -0` succeeds as
+# long as the process exists.
+while kill -0 "$WORKER_PID" 2>/dev/null; do
+  sleep 1 &
+  wait $!
+done
+# Worker exited. If it was a normal signal-driven shutdown, exit 0;
+# otherwise the healthcheck will have already failed and the orchestrator
+# will restart us.
+exit 0

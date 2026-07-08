@@ -108,8 +108,16 @@ The daemon (`gnupg-pkcs11-scd`) has hardcoded expectations:
 - **Config path** is fixed to `${GNUPGHOME}/gnupg-pkcs11-scd.conf` (no `--config` flag).
 - **Socket path** is fixed to `${GNUPG_PKCS11_SOCKETDIR}/gnupg-pkcs11-scd.XXXXXX/agent.S` where `XXXXXX` is a `mkdtemp(3)` random suffix (no `--socket` flag).
 - **`--homedir`** overrides `GNUPGHOME`.
-- **`--multi-server`** runs the daemon foreground with the socket enabled (good for containers).
-- **`--daemon`** forks and prints `SCDAEMON_INFO` to stdout; PID 1 in a container should not use this mode.
+- **`--multi-server`** runs the daemon foreground with both a unix-socket accept thread AND a foreground pipe handler on stdin/stdout. The pipe handler exits on stdin EOF.
+- **`--daemon`** forks: parent prints `SCDAEMON_INFO=<socket>:<pid>:<n>; export SCDAEMON_INFO` and exits; child (with `--no-detach`) skips `setsid()`/`close(0/1/2)` and continues serving the unix socket. The parent exiting is a problem when the daemon is PID 1 in a container (the container terminates).
+
+The entrypoint uses **`--daemon --no-detach` in a wrapper script** that runs the daemon in the background, parses `SCDAEMON_INFO` to discover the worker PID, and keeps PID 1 alive by polling `kill -0` on the worker. When the daemon dies, the poll loop exits and the container restarts. `SIGTERM`/`SIGINT`/`SIGHUP` are trapped and forwarded to the worker so `docker stop` / pod termination signals it cleanly.
+
+The entrypoint script:
+
+0. **Ensure runtime paths exist.** Run `mkdir -p` on `${SCD_HOMEDIR}` and `${SCD_SOCKET_DIR}` before any writes. The Dockerfile creates these paths at build time and chowns `/var/lib/gnupg-pkcs11-scd` to UID 1000, so this is normally a no-op. The defensive `mkdir -p` covers the case where the user mounts `SCD_HOMEDIR` or `SCD_SOCKET_DIR` to a path that does not yet exist (e.g. an emptyDir from a fresh k8s pod). If `mkdir` fails, exit 1 with a message that includes the path and the running UID.
+
+1. **Determine the provider list.**
 
 The entrypoint script:
 
@@ -126,7 +134,7 @@ The entrypoint script:
      - Zero matches → if the name came from the explicit `PKCS11_PROVIDERS` list, fail-fast with the searched path; if it came from auto-enumeration, skip silently.
      - Multiple matches → fail-fast listing the matches and telling the user to set `PKCS11_PROVIDER_<NAME>_LIBRARY`.
 4. **Write `${SCD_HOMEDIR}/gnupg-pkcs11-scd.conf`** with the resolved providers + paths.
-5. **`exec gnupg-pkcs11-scd --multi-server --homedir "${SCD_HOMEDIR}"`** with `GNUPG_PKCS11_SOCKETDIR` set from `${SCD_SOCKET_DIR:-/var/run/gnupg-pkcs11-scd}` (exported into the daemon's environment).
+5. **`exec` the daemon** with `GNUPG_PKCS11_SOCKETDIR` exported. With a TTY, just `exec gnupg-pkcs11-scd --multi-server`. In containers (no TTY), the script uses `--daemon --no-detach` in a backgrounded wrapper so PID 1 stays alive while the daemon (the fork's child) serves the unix socket. The wrapper polls the worker PID with `kill -0` and traps signals to forward them.
 
 ### Environment variables
 
@@ -229,8 +237,46 @@ fi
 } > "$CONF"
 
 # --- Step 4: exec daemon ---
+# Do not `unset` provider-specific env vars here — INFISICAL_* and similar
+# variables must propagate to the dlopened PKCS#11 library. The library
+# reads them at load time via getenv(3).
+#
+# Run mode selection:
+#   - TTY attached (`[ -t 0 ]`): interactive shell → `--multi-server`,
+#     which speaks assuan on stdin/stdout.
+#   - No TTY (container PID 1): use `--daemon --no-detach` in a wrapper.
+#     `--daemon` mode forks; the parent prints SCDAEMON_INFO and exits,
+#     which would terminate the container if the daemon were PID 1. We
+#     run the daemon in the background, parse SCDAEMON_INFO for the
+#     worker PID, then keep PID 1 alive by polling `kill -0` on the
+#     worker. Signals (TERM/INT/HUP) are trapped and forwarded.
 export GNUPG_PKCS11_SOCKETDIR="$SCD_SOCKET_DIR"
-exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
+if [ -t 0 ]; then
+  exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
+fi
+
+# Container path: background the daemon, parse SCDAEMON_INFO, poll the
+# worker PID. SCDAEMON_INFO format (per upstream scdaemon.c):
+#   SCDAEMON_INFO=<socket_path>:<pid>:<n>; export SCDAEMON_INFO
+gnupg-pkcs11-scd --daemon --no-detach --homedir "$SCD_HOMEDIR" >/tmp/scd-info 2>&1 &
+WRAPPER_PID=$!
+wait "$WRAPPER_PID" || true
+SCDAEMON_INFO="$(cat /tmp/scd-info)"
+echo "$SCDAEMON_INFO"
+INFO="${SCDAEMON_INFO#SCDAEMON_INFO=}"
+INFO="${INFO%; export SCDAEMON_INFO}"
+WORKER_PID="$(printf '%s' "$INFO" | awk -F: '{print $(NF-1)}')"
+if ! [[ "$WORKER_PID" =~ ^[0-9]+$ ]] || [ "$WORKER_PID" -le 1 ]; then
+  echo "Failed to extract worker PID from SCDAEMON_INFO: $SCDAEMON_INFO" >&2
+  exit 1
+fi
+rm -f /tmp/scd-info
+trap 'kill -TERM "$WORKER_PID" 2>/dev/null || true' TERM INT HUP
+while kill -0 "$WORKER_PID" 2>/dev/null; do
+  sleep 1 &
+  wait $!
+done
+exit 0
 ```
 
 ### ci/goss.yaml

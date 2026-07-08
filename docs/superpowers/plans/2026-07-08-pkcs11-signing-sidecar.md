@@ -535,8 +535,46 @@ fi
 } > "$CONF"
 
 # --- Step 4: exec daemon ---
+# Do not `unset` provider-specific env vars here — INFISICAL_* and similar
+# variables must propagate to the dlopened PKCS#11 library. The library
+# reads them at load time via getenv(3).
+#
+# Run mode selection:
+#   - TTY attached (`[ -t 0 ]`): interactive shell → `--multi-server`,
+#     which speaks assuan on stdin/stdout.
+#   - No TTY (container PID 1): use `--daemon --no-detach` in a wrapper.
+#     `--daemon` mode forks; the parent prints SCDAEMON_INFO and exits,
+#     which would terminate the container if the daemon were PID 1. We
+#     run the daemon in the background, parse SCDAEMON_INFO for the
+#     worker PID, then keep PID 1 alive by polling `kill -0` on the
+#     worker. Signals (TERM/INT/HUP) are trapped and forwarded.
 export GNUPG_PKCS11_SOCKETDIR="$SCD_SOCKET_DIR"
-exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
+if [ -t 0 ]; then
+  exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
+fi
+
+# Container path: background the daemon, parse SCDAEMON_INFO, poll the
+# worker PID. SCDAEMON_INFO format (per upstream scdaemon.c):
+#   SCDAEMON_INFO=<socket_path>:<pid>:<n>; export SCDAEMON_INFO
+gnupg-pkcs11-scd --daemon --no-detach --homedir "$SCD_HOMEDIR" >/tmp/scd-info 2>&1 &
+WRAPPER_PID=$!
+wait "$WRAPPER_PID" || true
+SCDAEMON_INFO="$(cat /tmp/scd-info)"
+echo "$SCDAEMON_INFO"
+INFO="${SCDAEMON_INFO#SCDAEMON_INFO=}"
+INFO="${INFO%; export SCDAEMON_INFO}"
+WORKER_PID="$(printf '%s' "$INFO" | awk -F: '{print $(NF-1)}')"
+if ! [[ "$WORKER_PID" =~ ^[0-9]+$ ]] || [ "$WORKER_PID" -le 1 ]; then
+  echo "Failed to extract worker PID from SCDAEMON_INFO: $SCDAEMON_INFO" >&2
+  exit 1
+fi
+rm -f /tmp/scd-info
+trap 'kill -TERM "$WORKER_PID" 2>/dev/null || true' TERM INT HUP
+while kill -0 "$WORKER_PID" 2>/dev/null; do
+  sleep 1 &
+  wait $!
+done
+exit 0
 ```
 
 - [ ] **Step 2: Confirm executable bit (the file should already be executable from Task 5)**
