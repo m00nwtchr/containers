@@ -101,17 +101,19 @@ fi
 # always requires that file to exist, even if it contains only a default
 # log_level. Env vars like INFISICAL_SERVER_URL and the auth credentials
 # override values inside this file; the file itself just needs to be
-# valid JSON and readable. Create a dummy at the default path if the
-# user hasn't mounted one. Users who DO supply INFISICAL_* content via
-# config file should mount their own file at this path or set
-# INFISICAL_CONFIG to override.
-INFISICAL_CONFIG_PATH="${INFISICAL_CONFIG:-/etc/infisical/pkcs11.conf}"
-if [ ! -f "$INFISICAL_CONFIG_PATH" ]; then
-  mkdir -p "$(dirname "$INFISICAL_CONFIG_PATH")"
-  cat > "$INFISICAL_CONFIG_PATH" <<'JSON'
+# valid JSON and readable. We write to a user-writable location (the
+# homedir) because the entrypoint runs as UID 1000, which can't write
+# under /etc. Users who DO supply INFISICAL_* content via config file
+# can set INFISICAL_CONFIG to a mounted path; if not set and we generate
+# one, we point INFISICAL_CONFIG at the generated file.
+INFISICAL_CONFIG_DIR="${SCD_HOMEDIR}/infisical"
+if [ -z "${INFISICAL_CONFIG:-}" ] && [ ! -f /etc/infisical/pkcs11.conf ]; then
+  mkdir -p "$INFISICAL_CONFIG_DIR"
+  cat > "$INFISICAL_CONFIG_DIR/pkcs11.conf" <<'JSON'
 {"log_level": "info"}
 JSON
-  chmod 600 "$INFISICAL_CONFIG_PATH"
+  chmod 600 "$INFISICAL_CONFIG_DIR/pkcs11.conf"
+  export INFISICAL_CONFIG="$INFISICAL_CONFIG_DIR/pkcs11.conf"
 fi
 
 # --- Step 4: exec daemon ---
@@ -122,57 +124,26 @@ fi
 # Run mode selection:
 #   - TTY attached (`[ -t 0 ]`): interactive shell → `--multi-server`,
 #     which speaks assuan on stdin/stdout.
-#   - No TTY (container PID 1): use `--daemon --no-detach` with a wrapper
-#     script that keeps PID 1 alive. `--daemon` mode forks; the parent
-#     prints SCDAEMON_INFO and exits. `--no-detach` skips setsid()/fd-close
-#     in the child. The fork's child (the actual daemon worker) continues
-#     running but is now orphaned from this script's PID. We parse
-#     SCDAEMON_INFO to capture the worker's PID, then wait on a sentinel
-#     process so PID 1 stays alive while forwarding SIGTERM/SIGINT to
-#     the worker. If the worker dies, we exit so the orchestrator
-#     restarts the container.
+#   - No TTY (container PID 1): use `--multi-server` with stdin redirected
+#     from a FIFO held open by a background writer. `--daemon` mode
+#     forks but the child terminates after the parent signals via pipe
+#     close (designed for gpg-agent's one-shot startup, not for
+#     long-running containers). `--multi-server` keeps running, but
+#     only if stdin never returns EOF. A FIFO with a holder that never
+#     sends data blocks the pipe handler forever while the background
+#     accept thread serves unix-socket clients.
 export GNUPG_PKCS11_SOCKETDIR="$SCD_SOCKET_DIR"
 if [ -t 0 ]; then
   exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR"
 fi
 
-# Container path: run daemon in background, parse SCDAEMON_INFO for the
-# worker PID, then keep PID 1 alive until the worker dies. The worker is
-# not a direct child of this shell (it was forked by the daemon parent
-# which then exits), so we poll with `kill -0` rather than `wait`.
-#
-# SCDAEMON_INFO format (per upstream scdaemon.c):
-#   SCDAEMON_INFO=<socket_path>:<pid>:<n>; export SCDAEMON_INFO
-# The trailing "n" is a protocol-version flag (always 1); we want <pid>.
-gnupg-pkcs11-scd --daemon --no-detach --homedir "$SCD_HOMEDIR" >/tmp/scd-info 2>&1 &
-WRAPPER_PID=$!
-# Wait for the wrapper (the daemon's parent) to fork and exit.
-wait "$WRAPPER_PID" || true
-SCDAEMON_INFO="$(cat /tmp/scd-info)"
-echo "$SCDAEMON_INFO"
-# Extract the PID: strip the prefix and suffix, then take the second
-# colon-separated field from the right (path:pid:n).
-INFO="${SCDAEMON_INFO#SCDAEMON_INFO=}"
-INFO="${INFO%; export SCDAEMON_INFO}"
-WORKER_PID="$(printf '%s' "$INFO" | awk -F: '{print $(NF-1)}')"
-if ! [[ "$WORKER_PID" =~ ^[0-9]+$ ]] || [ "$WORKER_PID" -le 1 ]; then
-  echo "Failed to extract worker PID from SCDAEMON_INFO: $SCDAEMON_INFO" >&2
-  exit 1
-fi
-rm -f /tmp/scd-info
-
-# Forward SIGTERM/SIGINT/SIGHUP to the worker so docker stop / pod
-# termination signals propagate.
-trap 'kill -TERM "$WORKER_PID" 2>/dev/null || true' TERM INT HUP
-
-# Poll the worker. We can't `wait` because the worker is not our direct
-# child (the daemon parent forked and exited). `kill -0` succeeds as
-# long as the process exists.
-while kill -0 "$WORKER_PID" 2>/dev/null; do
-  sleep 1 &
-  wait $!
-done
-# Worker exited. If it was a normal signal-driven shutdown, exit 0;
-# otherwise the healthcheck will have already failed and the orchestrator
-# will restart us.
-exit 0
+# Container path: keep stdin open via a FIFO held by a writer that never
+# sends data. The fifo is unlinked immediately so only this process and
+# the daemon hold FDs to it.
+FIFO="$(mktemp -u)"
+mkfifo "$FIFO"
+exec 7<>"$FIFO"
+sleep infinity >&7 &
+HOLDER_PID=$!
+rm -f "$FIFO"
+exec gnupg-pkcs11-scd --multi-server --homedir "$SCD_HOMEDIR" <&7
