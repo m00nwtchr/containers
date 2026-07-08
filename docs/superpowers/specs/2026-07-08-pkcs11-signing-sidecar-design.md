@@ -473,6 +473,29 @@ A separate workflow (out of scope for these images) runs:
 
 This validates the cross-image contract without requiring a live Infisical signer.
 
+### Verified end-to-end with real Infisical + real Forgejo
+
+Tested with `code.forgejo.org/forgejo/forgejo:14.0.2-rootless` (gpg 2.4.9, gpg-agent 2.4.9) as the gpg-client container, sharing a `scd-keepid-vol` volume with the sidecar container, both in a pod with `--share ipc`. The gpg-client needed a small **scdaemon-shim** that bridges gpg-agent's assuan-protocol-on-stdio to the sidecar's Unix socket. The shim is a ~95KB statically-linked C binary built with `musl-gcc -static`. Source: `docs/examples/scdaemon-shim.c`.
+
+Verified flow:
+- `gpg --card-status` inside the Forgejo container returned the real Infisical signer's smartcard:
+  ```
+  Reader ...........: [none]
+  Application ID ...: D27600012401115031313C19C15F1111
+  Application type .: OpenPGP
+  Version ..........: 11.50
+  Serial number ....: 3C19C15F
+  ```
+- The shim is configured as `scdaemon-program` in `gpg-agent.conf`. The gpg-agent launches the shim with `--multi-server`; the shim ignores that arg and proxies assuan between the agent's stdio and the sidecar's socket.
+- The shim uses `socket()`/`connect()` (NOT shell `exec N<>`) to open the unix socket, because `O_PATH` on unix sockets returns `ENXIO` from `connect()`.
+
+Critical: in the gpg-client container, `gpg-agent.conf` must contain:
+```
+scdaemon-program /usr/local/bin/scdaemon-shim
+allow-loopback-pinentry
+```
+The `allow-loopback-pinentry` is required so gpg-agent accepts passphrase input via the assuan pipe (gpg's passphrase prompt in non-interactive contexts).
+
 ### Recommended CI smoke (after this PR lands)
 
 A follow-up CI step (in `.github/workflows/build-images.yaml` or a new workflow) should:
