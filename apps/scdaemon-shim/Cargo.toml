@@ -1,0 +1,17 @@
+[package]
+name = "scdaemon-shim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Bridges gpg-agent's scdaemon protocol (stdio) to a remote gnupg-pkcs11-scd daemon (Unix socket)"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
