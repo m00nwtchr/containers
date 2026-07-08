@@ -12,11 +12,11 @@ spec: docs/superpowers/specs/2026-07-08-pkcs11-signing-sidecar-design.md
 
 **Architecture:** Two images linked by filesystem mounts only. The sidecar generates `${SCD_HOMEDIR}/gnupg-pkcs11-scd.conf` at startup from `PKCS11_PROVIDERS` and `/providers/<name>/lib<name>*.so` globs (daemon has no `--config` flag; config must live at `${GNUPGHOME}/gnupg-pkcs11-scd.conf`). The daemon names its own socket via `mkdtemp` at `${GNUPG_PKCS11_SOCKETDIR}/gnupg-pkcs11-scd.XXXXXX/agent.S`; consumers glob for `agent.S`. The provider image's `/` bind-mounts into the sidecar's `/providers/<name>/` to make the library discoverable. No network protocol between images.
 
-**Tech Stack:** Debian 12 (bookworm) `gnupg-pkcs11-scd 0.10.0-2+b1` package; bash entrypoint; `FROM scratch` provider; `tar -xO` extraction; SHA256 verification; docker/buildx multi-arch via existing repo CI.
+**Tech Stack:** Debian 12 (bookworm) `gnupg-pkcs11-scd 0.10.0-2` package; bash entrypoint; `FROM scratch` provider; `tar -xO` extraction; SHA256 verification; docker/buildx multi-arch via existing repo CI.
 
 ## Global Constraints
 
-- Image 1 base: `mirror.gcr.io/debian:bookworm-slim`, pinned `gnupg-pkcs11-scd=0.10.0-2+b1` (no parens — dash rejects `(`), plus `ca-certificates` and `bash`. Single stage. (Original choice of trixie to get 0.11.0 was wrong — 0.11.0 is only in Debian sid; trixie has 0.10.0-5. Switched to bookworm to match `apps/debian` and stay on stable Debian.)
+- Image 1 base: `mirror.gcr.io/debian:bookworm-slim`, pinned `gnupg-pkcs11-scd=0.10.0-2` (no parens — dash rejects `(`), plus `ca-certificates` and `bash`. Single stage. (Original choice of trixie to get 0.11.0 was wrong — 0.11.0 is only in Debian sid; trixie has 0.10.0-5. Switched to bookworm to match `apps/debian` and stay on stable Debian.)
 - Image 1 daemon (`gnupg-pkcs11-scd`) has NO `--config` and NO `--socket` flags. Config must live at `${GNUPGHOME}/gnupg-pkcs11-scd.conf`. Socket is created by the daemon itself at `${GNUPG_PKCS11_SOCKETDIR}/gnupg-pkcs11-scd.XXXXXX/agent.S` via `mkdtemp(3)`. Entrypoint sets `GNUPGHOME` (via `--homedir`), exports `GNUPG_PKCS11_SOCKETDIR`, and `exec`s `gnupg-pkcs11-scd --multi-server`. Consumers find the socket via glob.
 - Image 2 base: `FROM scratch` for runtime, `mirror.gcr.io/debian:trixie-slim` for build substage. Downloads `Infisical/infisical-pkcs-11 v0.0.3` upstream tarballs, verifies SHA256 against `checksums-sha256.txt` from the same release.
 - Image 2 ships exactly one file at root: `/libinfisical-pkcs11.so`. No `USER`, `ENTRYPOINT`, `CMD`, or `VOLUME`. No shell, no base layers beyond scratch.
@@ -270,11 +270,11 @@ channels:
 
 - [ ] **Step 2: Create `apps/gnupg-pkcs11-scd/ci/latest.sh`**
 
-The Debian bookworm package version is `0.10.0-2+b1`. Hardcode this — the Dockerfile pins it; this script is for CI drift display only and must match.
+The Debian bookworm package version is `0.10.0-2`. Hardcode this — the Dockerfile pins it; this script is for CI drift display only and must match.
 
 ```sh
 #!/usr/bin/env bash
-printf "%s" "0.10.0-2+b1"
+printf "%s" "0.10.0-2"
 ```
 
 Rationale for hardcoding: the Dockerfile pins via `apt-get install (=${VERSION})`; CI drift detection only needs the version string, not a live query. Querying Debian APIs from CI would add a network dependency for no gain.
@@ -291,7 +291,7 @@ chmod +x apps/gnupg-pkcs11-scd/ci/latest.sh
 apps/gnupg-pkcs11-scd/ci/latest.sh
 ```
 
-Expected output: `0.10.0-2+b1`.
+Expected output: `0.10.0-2`.
 
 - [ ] **Step 5: Commit**
 
@@ -317,7 +317,7 @@ Single-stage Debian bookworm image. Installs pinned `gnupg-pkcs11-scd`, copies t
 
 ```dockerfile
 FROM mirror.gcr.io/debian:bookworm-slim
-ARG VERSION=0.10.0-2+b1
+ARG VERSION=0.10.0-2
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -362,13 +362,13 @@ Note: the stub uses `--multi-server` (foreground) rather than `--daemon` (fork).
 ```bash
 docker buildx build \
   --platform linux/amd64 \
-  --build-arg VERSION=0.10.0-2+b1 \
+  --build-arg VERSION=0.10.0-2 \
   --tag gnupg-pkcs11-scd:test \
   --file apps/gnupg-pkcs11-scd/Dockerfile \
   apps/gnupg-pkcs11-scd
 ```
 
-Expected: build completes. The `apt-get install gnupg-pkcs11-scd=0.10.0-2+b1` step must succeed against the Debian bookworm repo; if Debian repos change or the package is removed, this fails.
+Expected: build completes. The `apt-get install gnupg-pkcs11-scd=0.10.0-2` step must succeed against the Debian bookworm repo; if Debian repos change or the package is removed, this fails.
 
 - [ ] **Step 4: Verify the binary is present**
 
@@ -560,7 +560,7 @@ Expected: no errors. If `shellcheck` is unavailable, skip. If warnings are emitt
 ```bash
 docker buildx build \
   --platform linux/amd64 \
-  --build-arg VERSION=0.10.0-2+b1 \
+  --build-arg VERSION=0.10.0-2 \
   --tag gnupg-pkcs11-scd:test \
   --file apps/gnupg-pkcs11-scd/Dockerfile \
   apps/gnupg-pkcs11-scd
