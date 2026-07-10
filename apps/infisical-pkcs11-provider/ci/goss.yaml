@@ -1,0 +1,5 @@
+---
+file:
+  /libinfisical-pkcs11.so:
+    exists: true
+    filetype: file

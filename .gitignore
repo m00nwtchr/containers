@@ -5,6 +5,11 @@
 ### age ###
 age.agekey
 
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
 ### VisualStudioCode ###
 .vscode/*
 !.vscode/settings.json
