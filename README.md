@@ -8,9 +8,12 @@ Container | Channel | Image
 [bw](https://github.com/m00nwtchr/containers/pkgs/container/bw) | stable | ghcr.io/m00nwtchr/bw
 [debian](https://github.com/m00nwtchr/containers/pkgs/container/debian) | bookworm-slim | ghcr.io/m00nwtchr/debian
 [git](https://github.com/m00nwtchr/containers/pkgs/container/git) | stable | ghcr.io/m00nwtchr/git
+[gnupg-pkcs11-scd](https://github.com/m00nwtchr/containers/pkgs/container/gnupg-pkcs11-scd) | stable | ghcr.io/m00nwtchr/gnupg-pkcs11-scd
+[infisical-pkcs11-provider](https://github.com/m00nwtchr/containers/pkgs/container/infisical-pkcs11-provider) | stable | ghcr.io/m00nwtchr/infisical-pkcs11-provider
 [kodi](https://github.com/m00nwtchr/containers/pkgs/container/kodi) | stable | ghcr.io/m00nwtchr/kodi
 [pipewire](https://github.com/m00nwtchr/containers/pkgs/container/pipewire) | stable | ghcr.io/m00nwtchr/pipewire
 [restic-rclone](https://github.com/m00nwtchr/containers/pkgs/container/restic-rclone) | stable | ghcr.io/m00nwtchr/restic-rclone
+[scdaemon-shim](https://github.com/m00nwtchr/containers/pkgs/container/scdaemon-shim) | stable | ghcr.io/m00nwtchr/scdaemon-shim
 [ssh-tpm-agent](https://github.com/m00nwtchr/containers/pkgs/container/ssh-tpm-agent) | stable | ghcr.io/m00nwtchr/ssh-tpm-agent
 [timescaledb](https://github.com/m00nwtchr/containers/pkgs/container/timescaledb) | stable | ghcr.io/m00nwtchr/timescaledb
 [weston](https://github.com/m00nwtchr/containers/pkgs/container/weston) | stable | ghcr.io/m00nwtchr/weston
