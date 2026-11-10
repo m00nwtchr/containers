@@ -7,6 +7,7 @@ Container | Channel | Image
 [blocky](https://github.com/m00nwtchr/containers/pkgs/container/blocky) | stable | ghcr.io/m00nwtchr/blocky
 [bw](https://github.com/m00nwtchr/containers/pkgs/container/bw) | stable | ghcr.io/m00nwtchr/bw
 [debian](https://github.com/m00nwtchr/containers/pkgs/container/debian) | bookworm-slim | ghcr.io/m00nwtchr/debian
+[foundry-vtt-mcp](https://github.com/m00nwtchr/containers/pkgs/container/foundry-vtt-mcp) | stable | ghcr.io/m00nwtchr/foundry-vtt-mcp
 [git](https://github.com/m00nwtchr/containers/pkgs/container/git) | stable | ghcr.io/m00nwtchr/git
 [gnupg-pkcs11-scd](https://github.com/m00nwtchr/containers/pkgs/container/gnupg-pkcs11-scd) | stable | ghcr.io/m00nwtchr/gnupg-pkcs11-scd
 [infisical-pkcs11-provider](https://github.com/m00nwtchr/containers/pkgs/container/infisical-pkcs11-provider) | stable | ghcr.io/m00nwtchr/infisical-pkcs11-provider

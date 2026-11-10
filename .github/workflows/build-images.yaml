@@ -190,8 +190,11 @@ jobs:
             VERSION=${{ matrix.image.version }}
             REVISION=${{ github.sha }}
             CHANNEL=${{ matrix.image.channel }}
-          # TODO: Use ${{ matrix.image.context }}, requires updates to all dockerfiles :-(
-          context: .
+            ${{ matrix.image.name == 'foundry-vtt-mcp' && format('FOUNDRY_MCP_REF={0}', matrix.image.version) || '' }}
+          # Existing images use repository-root-relative COPY paths. The Foundry
+          # image is a standalone overlay and expects its app directory as the
+          # build context.
+          context: ${{ matrix.image.name == 'foundry-vtt-mcp' && matrix.image.context || '.' }}
           platforms: ${{ matrix.image.platform }}
           file: ${{ matrix.image.dockerfile }}
           outputs: ${{ steps.prepare-build-outputs.outputs.outputs }}
