@@ -28,6 +28,7 @@ ENV NODE_ENV=production \
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/INSTRUCTIONS.md ./INSTRUCTIONS.md
 
 COPY scripts/configure-credentials.mjs ./scripts/
 COPY --chmod=0755 scripts/entrypoint.sh ./scripts/
